@@ -37,14 +37,12 @@ Usage:
 [2] https://github.com/Rykian/clockwork
 [3] https://adam.herokuapp.com/past/2010/6/30/replace_cron_with_clockwork/
 """
-from collections.abc import Hashable
 import datetime
 import functools
 import logging
-import random
 import re
 import time
-from typing import Set, List, Optional, Callable, Union
+from typing import Set, List, Optional, Callable, Union, AnyStr
 
 logger = logging.getLogger("schedule")
 
@@ -67,7 +65,7 @@ class IntervalError(ScheduleValueError):
     pass
 
 
-class CancelJob(object):
+class CancelJob():
     """
     Can be returned from a job to unschedule itself.
     """
@@ -75,7 +73,7 @@ class CancelJob(object):
     pass
 
 
-class Scheduler(object):
+class Scheduler():
     """
     Objects instantiated by the :class:`Scheduler <Scheduler>` are
     factories to create jobs, keep record of scheduled jobs and
@@ -118,7 +116,7 @@ class Scheduler(object):
             self._run_job(job)
             time.sleep(delay_seconds)
 
-    def get_jobs(self, tag: Optional[Hashable] = None) -> List["Job"]:
+    def get_jobs(self, tag: Optional[AnyStr] = None) -> List["Job"]:
         """
         Gets scheduled jobs marked with the given tag, or all jobs
         if tag is omitted.
@@ -131,7 +129,7 @@ class Scheduler(object):
         else:
             return [job for job in self.jobs if tag in job.tags]
 
-    def clear(self, tag: Optional[Hashable] = None) -> None:
+    def clear(self, tag: Optional[AnyStr] = None) -> None:
         """
         Deletes scheduled jobs marked with the given tag, or all jobs
         if tag is omitted.
@@ -174,7 +172,7 @@ class Scheduler(object):
             self.cancel_job(job)
 
     def get_next_run(
-        self, tag: Optional[Hashable] = None
+        self, tag: Optional[AnyStr] = None
     ) -> Optional[datetime.datetime]:
         """
         Datetime when the next job should run.
@@ -205,7 +203,7 @@ class Scheduler(object):
         return (self.next_run - datetime.datetime.now()).total_seconds()
 
 
-class Job(object):
+class Job():
     """
     A periodic job as used by :class:`Scheduler`.
 
@@ -227,6 +225,8 @@ class Job(object):
         self.interval: int = interval  # pause interval * unit between runs
         self.latest: Optional[int] = None  # upper limit to the interval
         self.job_func: Optional[functools.partial] = None  # the job job_func to run
+        self.args = None
+        self.kwargs = None
 
         # time units, e.g. 'minutes', 'hours', ...
         self.unit: Optional[str] = None
@@ -252,7 +252,7 @@ class Job(object):
         # optional time of final run
         self.cancel_after: Optional[datetime.datetime] = None
 
-        self.tags: Set[Hashable] = set()  # unique set of tags for the job
+        self.tags: Set[AnyStr] = set()  # unique set of tags for the job
         self.scheduler: Optional[Scheduler] = scheduler  # scheduler to register with
 
     def __lt__(self, other) -> bool:
@@ -272,13 +272,13 @@ class Job(object):
             self.interval,
             self.unit,
             job_func_name,
-            "()" if self.job_func is None else self.job_func.args,
-            "{}" if self.job_func is None else self.job_func.keywords,
+            "()" if self.job_func is None else self.args,
+            "{}" if self.job_func is None else self.kwargs,
         )
 
     def __repr__(self):
         def format_time(t):
-            return t.strftime("%Y-%m-%d %H:%M:%S") if t else "[never]"
+            return t.isoformat() if t else "[never]"
 
         def is_repr(j):
             return not isinstance(j, Job)
@@ -292,8 +292,14 @@ class Job(object):
             job_func_name = self.job_func.__name__
         else:
             job_func_name = repr(self.job_func)
-        args = [repr(x) if is_repr(x) else str(x) for x in self.job_func.args]
-        kwargs = ["%s=%s" % (k, repr(v)) for k, v in self.job_func.keywords.items()]
+        if self.args:
+            args = [repr(x) if is_repr(x) else str(x) for x in self.args]
+        else:
+            args = []
+        if self.kwargs:
+            kwargs = ["%s=%s" % (k, repr(v)) for k, v in self.kwargs.items()]
+        else:
+            kwargs = []
         call_repr = job_func_name + "(" + ", ".join(args + kwargs) + ")"
 
         if self.at_time is not None:
@@ -451,17 +457,19 @@ class Job(object):
         self.start_day = "sunday"
         return self.weeks
 
-    def tag(self, *tags: Hashable):
+    def tag(self, *tags: AnyStr):
         """
         Tags the job with one or more unique identifiers.
 
-        Tags must be hashable. Duplicate tags are discarded.
+        Tags must be AnyStr. Duplicate tags are discarded.
 
-        :param tags: A unique list of ``Hashable`` tags.
+        Note: micropython doesn't have 'AnyStr'.
+
+        :param tags: A unique list of ``AnyStr`` tags.
         :return: The invoked job instance
         """
-        if not all(isinstance(tag, Hashable) for tag in tags):
-            raise TypeError("Tags must be hashable")
+        if not all( isinstance(tag, str) or callable(getattr(tag, "__hash__", None)) for tag in tags):
+            raise TypeError("Tags must be AnyStr")
         self.tags.update(tags)
         return self
 
@@ -651,6 +659,8 @@ class Job(object):
         :return: The invoked job instance
         """
         self.job_func = functools.partial(job_func, *args, **kwargs)
+        self.args = args
+        self.kwargs = kwargs
         functools.update_wrapper(self.job_func, job_func)
         self._schedule_next_run()
         if self.scheduler is None:
@@ -708,7 +718,8 @@ class Job(object):
         if self.latest is not None:
             if not (self.latest >= self.interval):
                 raise ScheduleError("`latest` is greater than `interval`")
-            interval = random.randint(self.interval, self.latest)
+            # interval = random.randint(self.interval, self.latest)
+            raise NotImplementedError("Bad place")
         else:
             interval = self.interval
 
@@ -825,14 +836,14 @@ def run_all(delay_seconds: int = 0) -> None:
     default_scheduler.run_all(delay_seconds=delay_seconds)
 
 
-def get_jobs(tag: Optional[Hashable] = None) -> List[Job]:
+def get_jobs(tag: Optional[AnyStr] = None) -> List[Job]:
     """Calls :meth:`get_jobs <Scheduler.get_jobs>` on the
     :data:`default scheduler instance <default_scheduler>`.
     """
     return default_scheduler.get_jobs(tag)
 
 
-def clear(tag: Optional[Hashable] = None) -> None:
+def clear(tag: Optional[AnyStr] = None) -> None:
     """Calls :meth:`clear <Scheduler.clear>` on the
     :data:`default scheduler instance <default_scheduler>`.
     """
@@ -846,7 +857,7 @@ def cancel_job(job: Job) -> None:
     default_scheduler.cancel_job(job)
 
 
-def next_run(tag: Optional[Hashable] = None) -> Optional[datetime.datetime]:
+def next_run(tag: Optional[AnyStr] = None) -> Optional[datetime.datetime]:
     """Calls :meth:`next_run <Scheduler.next_run>` on the
     :data:`default scheduler instance <default_scheduler>`.
     """
