@@ -142,7 +142,7 @@ class Scheduler():
             del self.jobs[:]
         else:
             logger.debug('Deleting all jobs tagged "%s"', tag)
-            self.jobs[:] = (job for job in self.jobs if tag not in job.tags)
+            self.jobs[:] = [job for job in self.jobs if tag not in job.tags]
 
     def cancel_job(self, job: "Job") -> None:
         """
